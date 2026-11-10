@@ -73,7 +73,7 @@ SELECT avg(temperature) FROM boiler WHERE sensor = {{sensor}} AND time > now() -
 
 ```
 npm test                                  # unit and node tests
-ARC_MAIN_BIN=/path/to/arc npm run e2e     # Node-RED 4 and 5 in Docker against Arc 26.09.3 (+ a native Arc build)
+ARC_MAIN_BIN=/path/to/arc npm run e2e     # Node-RED 4 and 5 in Docker against Arc 26.09.4 (+ a native Arc build)
 ```
 
 ## License

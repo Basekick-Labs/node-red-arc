@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end run on Docker (Rancher Desktop works):
-#   - Arc 26.09.3 in a container (no refusal headers: at-most-once path)
+#   - Arc 26.09.4 in a container (no refusal headers: at-most-once path)
 #   - Arc main as a native binary on the host when ARC_MAIN_BIN is set
 #     (refusal headers, partial writes)
 #   - Node-RED 4.1.8 and 5.0.9 containers with this package installed
@@ -40,13 +40,13 @@ wait_http() { # url, seconds
 
 docker network create "$NET" >/dev/null
 
-# --- Arc 26.09.3 ---
+# --- Arc 26.09.4 ---
 cat > "$WORK/arc26-start.sh" <<EOF
 docker start nrarc-arc26 >/dev/null
 EOF
 docker run -d --name nrarc-arc26 --network "$NET" -p $ARC26_PORT:8000 \
   -e ARC_AUTH_BOOTSTRAP_TOKEN="$TOKEN" -e ARC_COMPACTION_ENABLED=false \
-  -v "$WORK/arc26:/app/data" basekicklabs/arc:26.09.3 >/dev/null
+  -v "$WORK/arc26:/app/data" ghcr.io/basekick-labs/arc:26.09.4 >/dev/null
 wait_http "http://localhost:$ARC26_PORT/health" 60
 
 TARGETS='[{"name":"a26","hostUrl":"http://localhost:'$ARC26_PORT'","nrArcUrl":"http://nrarc-arc26:8000","db":"nodered_e2e","stop":"docker stop -t 2 nrarc-arc26","start":"docker start nrarc-arc26"}'
