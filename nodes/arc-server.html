@@ -1,0 +1,104 @@
+<script type="text/javascript">
+  RED.nodes.registerType('arc-server', {
+    category: 'config',
+    defaults: {
+      name: { value: '' },
+      url: { value: 'http://localhost:8000', required: true, validate: RED.validators.regex(/^https?:\/\/.+/) },
+      database: { value: 'default', validate: RED.validators.regex(/^([A-Za-z][A-Za-z0-9_-]{0,63})?$/) },
+      tls: { type: 'tls-config', required: false },
+      timeoutMs: { value: 30000, validate: RED.validators.number() },
+      compression: { value: 'auto' },
+    },
+    credentials: {
+      token: { type: 'password' },
+    },
+    label: function () {
+      return this.name || this.url;
+    },
+    oneditprepare: function () {
+      const node = this;
+      function toggleTls() {
+        $('#node-config-row-tls').toggle(/^https:/.test($('#node-config-input-url').val()));
+      }
+      $('#node-config-input-url').on('input change', toggleTls);
+      toggleTls();
+      $('#node-config-arc-test').on('click', function () {
+        const out = $('#node-config-arc-test-result');
+        out.text('Testing…');
+        $.ajax({
+          url: 'arc-server/test',
+          type: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({
+            id: node.id,
+            url: $('#node-config-input-url').val(),
+            token: $('#node-config-input-token').val(),
+            tls: $('#node-config-input-tls').val(),
+          }),
+          success: function (r) {
+            out.css('color', r.ok ? 'green' : 'red').text(r.message);
+          },
+          error: function (xhr) {
+            out.css('color', 'red').text('Test failed: ' + (xhr.statusText || 'error'));
+          },
+        });
+      });
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="arc-server">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Arc">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-url"><i class="fa fa-globe"></i> URL</label>
+    <input type="text" id="node-config-input-url" placeholder="http://localhost:8000">
+  </div>
+  <div class="form-row" id="node-config-row-tls">
+    <label for="node-config-input-tls"><i class="fa fa-lock"></i> TLS</label>
+    <input type="text" id="node-config-input-tls">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-token"><i class="fa fa-key"></i> Token</label>
+    <input type="password" id="node-config-input-token">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-database"><i class="fa fa-database"></i> Database</label>
+    <input type="text" id="node-config-input-database" placeholder="default">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-timeoutMs"><i class="fa fa-clock-o"></i> Timeout (ms)</label>
+    <input type="text" id="node-config-input-timeoutMs">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-compression"><i class="fa fa-compress"></i> Compression</label>
+    <select id="node-config-input-compression">
+      <option value="auto">auto (zstd if available, else gzip)</option>
+      <option value="gzip">gzip</option>
+      <option value="none">none</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button type="button" class="red-ui-button" id="node-config-arc-test"><i class="fa fa-plug"></i> Test connection</button>
+    <div id="node-config-arc-test-result" style="margin-top:6px"></div>
+  </div>
+</script>
+
+<script type="text/markdown" data-help-name="arc-server">
+Connection to an Arc server, shared by `arc-write` and `arc-query` nodes.
+
+### Properties
+
+: URL (string) : Base URL of Arc, for example `http://arc:8000`. A path prefix is kept, for Arc behind a reverse proxy.
+: Token (string) : Arc API token, sent as `Authorization: Bearer`. Use a token with `write` for writing and `read` for querying. `${ENV_VAR}` works.
+: Database (string) : Default database for nodes that do not set one. Arc creates it on the first write.
+: TLS (tls-config) : CA, client certificate and verification settings for `https` URLs.
+: Compression : Request body compression for writes above 1 KiB. Arc detects it automatically.
+
+### Details
+
+**Test connection** checks `/health` and then the token through `/api/v1/auth/verify`. A saved token is only tested against the URL it was saved with; if you change the URL, type the token again.
+</script>

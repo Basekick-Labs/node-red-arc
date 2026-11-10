@@ -1,0 +1,113 @@
+<script type="text/javascript">
+  RED.nodes.registerType('arc-query', {
+    category: 'storage',
+    color: '#5bc0de',
+    defaults: {
+      name: { value: '' },
+      server: { type: 'arc-server', required: true },
+      database: { value: '', validate: RED.validators.regex(/^([A-Za-z][A-Za-z0-9_-]{0,63})?$/) },
+      sql: { value: 'SELECT * FROM my_measurement ORDER BY time DESC LIMIT 100' },
+      allowMsgSql: { value: false },
+      output: { value: 'rows' },
+      rowsPerMsg: { value: 1000, validate: RED.validators.number() },
+      timeFormat: { value: 'string' },
+      maxResponseMB: { value: 64, validate: RED.validators.number() },
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'db.svg',
+    label: function () {
+      return this.name || 'arc query';
+    },
+    paletteLabel: 'arc query',
+    oneditprepare: function () {
+      this.editor = RED.editor.createEditor({ id: 'node-input-sql-editor', mode: 'ace/mode/sql', value: this.sql });
+      $('#node-input-output').on('change', function () {
+        $('#row-rowsPerMsg').toggle($(this).val() === 'chunks');
+      }).trigger('change');
+    },
+    oneditsave: function () {
+      this.sql = this.editor.getValue();
+      this.editor.destroy();
+      delete this.editor;
+    },
+    oneditcancel: function () {
+      this.editor.destroy();
+      delete this.editor;
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="arc-query">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-server"><i class="fa fa-server"></i> Server</label>
+    <input type="text" id="node-input-server">
+  </div>
+  <div class="form-row">
+    <label for="node-input-database"><i class="fa fa-database"></i> Database</label>
+    <input type="text" id="node-input-database" placeholder="server default">
+  </div>
+  <div class="form-row node-text-editor-row">
+    <label><i class="fa fa-code"></i> SQL</label>
+    <div style="height:180px; min-height:120px;" class="node-text-editor" id="node-input-sql-editor"></div>
+  </div>
+  <div class="form-row">
+    <label>&nbsp;</label>
+    <input type="checkbox" id="node-input-allowMsgSql" style="width:auto"> Allow <code>msg.sql</code> to replace this SQL
+  </div>
+  <div class="form-row">
+    <label for="node-input-output"><i class="fa fa-sign-out"></i> Output</label>
+    <select id="node-input-output">
+      <option value="rows">one message, array of row objects</option>
+      <option value="single">one message per row</option>
+      <option value="chunks">messages of N rows</option>
+      <option value="raw">one message, {columns, data}</option>
+    </select>
+  </div>
+  <div class="form-row" id="row-rowsPerMsg">
+    <label for="node-input-rowsPerMsg"><i class="fa fa-th"></i> Rows per msg</label>
+    <input type="text" id="node-input-rowsPerMsg" style="width:90px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-timeFormat"><i class="fa fa-clock-o"></i> time column</label>
+    <select id="node-input-timeFormat">
+      <option value="string">ISO string (exact)</option>
+      <option value="date">Date (milliseconds)</option>
+      <option value="epochUs">epoch microseconds (string)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-maxResponseMB"><i class="fa fa-arrows-v"></i> Max response</label>
+    <input type="text" id="node-input-maxResponseMB" style="width:60px"> MB
+  </div>
+</script>
+
+<script type="text/markdown" data-help-name="arc-query">
+Runs SQL on Arc and returns the rows.
+
+### Inputs
+
+: params (object) : Values for `{{name}}` placeholders in the SQL, quoted safely as literals. `{{#name}}` inserts an identifier (a column or table name, checked).
+: database (string) : Overrides the node's database.
+: sql (string) : Replaces the SQL, only when *Allow msg.sql* is enabled.
+
+### Outputs
+
+: payload (array | object) : Rows as objects (`{time, temperature, ...}`), one row per message, chunks, or `{columns, data}`.
+: arc (object) : `{rowCount, executionTimeMs, truncated, rowsCapped, rowCap, columns}`.
+: parts (object) : Set in the per-row and chunk modes so a Join node can reassemble them.
+
+### Details
+
+Arc has no query parameters. Build queries with `{{name}}` placeholders and `msg.params` instead of concatenating strings; `msg.sql` from upstream data is an SQL injection risk and is off by default.
+
+The database comes from `msg.database`, then this node, then the server's default; refer to tables by name (`FROM cpu`). Arc rejects `database.table` syntax while a database is selected.
+
+The `time` column comes back as an ISO string with microseconds; *Date* drops the microseconds. Integers larger than 2^53 are returned as strings on Node.js 21 and later, and lose precision on older versions.
+
+A query rejected by Arc's limits (429) is not retried. A 503 is retried once.
+</script>

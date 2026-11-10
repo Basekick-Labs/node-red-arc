@@ -1,0 +1,148 @@
+<script type="text/javascript">
+  RED.nodes.registerType('arc-write', {
+    category: 'storage',
+    color: '#5bc0de',
+    defaults: {
+      name: { value: '' },
+      server: { type: 'arc-server', required: true },
+      database: { value: '', validate: RED.validators.regex(/^([A-Za-z][A-Za-z0-9_-]{0,63})?$/) },
+      measurement: { value: '', validate: RED.validators.regex(/^([a-zA-Z][a-zA-Z0-9_-]{0,127})?$/) },
+      precision: { value: 'ms' },
+      integerColumns: { value: '' },
+      onTypeMismatch: { value: 'null' },
+      stringifyObjects: { value: false },
+      sanitizeNames: { value: false },
+      batchSize: { value: 5000, validate: RED.validators.number() },
+      flushInterval: { value: 1000, validate: RED.validators.number() },
+      maxBufferRows: { value: 200000, validate: RED.validators.number() },
+      maxBufferMB: { value: 64, validate: RED.validators.number() },
+      maxPendingMessages: { value: 100000, validate: RED.validators.number() },
+      maxInFlight: { value: 4, validate: RED.validators.number() },
+      overflow: { value: 'drop-oldest' },
+      outputs: { value: 0 },
+    },
+    inputs: 1,
+    outputs: 0,
+    icon: 'db.svg',
+    align: 'right',
+    label: function () {
+      return this.name || (this.measurement ? 'arc ' + this.measurement : 'arc write');
+    },
+    paletteLabel: 'arc write',
+    oneditprepare: function () {
+      $('#node-input-resultsOutput').prop('checked', Number(this.outputs) > 0);
+    },
+    oneditsave: function () {
+      this.outputs = $('#node-input-resultsOutput').prop('checked') ? 1 : 0;
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="arc-write">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-server"><i class="fa fa-server"></i> Server</label>
+    <input type="text" id="node-input-server">
+  </div>
+  <div class="form-row">
+    <label for="node-input-database"><i class="fa fa-database"></i> Database</label>
+    <input type="text" id="node-input-database" placeholder="server default">
+  </div>
+  <div class="form-row">
+    <label for="node-input-measurement"><i class="fa fa-table"></i> Measurement</label>
+    <input type="text" id="node-input-measurement" placeholder="or msg.measurement">
+  </div>
+  <div class="form-row">
+    <label for="node-input-precision"><i class="fa fa-clock-o"></i> Time unit</label>
+    <select id="node-input-precision">
+      <option value="ms">milliseconds</option>
+      <option value="s">seconds</option>
+      <option value="us">microseconds</option>
+      <option value="ns">nanoseconds</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-integerColumns"><i class="fa fa-hashtag"></i> Integer columns</label>
+    <input type="text" id="node-input-integerColumns" placeholder="count, errors">
+  </div>
+  <div class="form-row">
+    <label for="node-input-onTypeMismatch"><i class="fa fa-exchange"></i> Type mismatch</label>
+    <select id="node-input-onTypeMismatch">
+      <option value="null">leave that cell empty</option>
+      <option value="reject-row">reject the message</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label>&nbsp;</label>
+    <input type="checkbox" id="node-input-stringifyObjects" style="width:auto"> Store nested objects as JSON strings
+  </div>
+  <div class="form-row">
+    <label>&nbsp;</label>
+    <input type="checkbox" id="node-input-sanitizeNames" style="width:auto"> Replace invalid characters in names with _
+  </div>
+  <hr>
+  <div class="form-row">
+    <label for="node-input-batchSize"><i class="fa fa-th"></i> Batch size</label>
+    <input type="text" id="node-input-batchSize" style="width:90px"> rows
+  </div>
+  <div class="form-row">
+    <label for="node-input-flushInterval"><i class="fa fa-repeat"></i> Flush every</label>
+    <input type="text" id="node-input-flushInterval" style="width:90px"> ms
+  </div>
+  <div class="form-row">
+    <label for="node-input-maxBufferRows"><i class="fa fa-inbox"></i> Buffer cap</label>
+    <input type="text" id="node-input-maxBufferRows" style="width:90px"> rows,
+    <input type="text" id="node-input-maxBufferMB" style="width:60px"> MB
+  </div>
+  <div class="form-row">
+    <label for="node-input-maxPendingMessages"><i class="fa fa-envelope"></i> Pending msgs</label>
+    <input type="text" id="node-input-maxPendingMessages" style="width:90px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-maxInFlight"><i class="fa fa-plane"></i> In flight</label>
+    <input type="text" id="node-input-maxInFlight" style="width:90px"> requests
+  </div>
+  <div class="form-row">
+    <label for="node-input-overflow"><i class="fa fa-trash"></i> When full</label>
+    <select id="node-input-overflow">
+      <option value="drop-oldest">drop the oldest rows</option>
+      <option value="reject-new">reject new messages</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label>&nbsp;</label>
+    <input type="checkbox" id="node-input-resultsOutput" style="width:auto"> Output one message per batch sent
+  </div>
+</script>
+
+<script type="text/markdown" data-help-name="arc-write">
+Writes rows to Arc as MessagePack, batched and buffered.
+
+### Inputs
+
+: payload (object | array | number) : One row (`{temperature: 21.5, sensor: "a1"}`), an array of rows, `{rows: [...]}`, `{columns: {...}}` (equal-length arrays), or a number (stored in column `value`).
+: measurement (string) : Overrides the node's measurement.
+: database (string) : Overrides the node's and server's database.
+: time (Date | number | string | BigInt) : Time for the row(s), unless a row has its own `time`. Numbers use the node's time unit. Missing means "now".
+: precision (string) : Overrides the time unit (`s`, `ms`, `us`, `ns`) for this message.
+: flush (boolean) : `true` sends everything buffered now.
+
+### Outputs
+
+Optional. With *Output one message per batch sent*, each batch produces `msg.payload = {database, measurement, rows, status, reason, durationMs, action}`.
+
+### Details
+
+Every value is a column; there are no tags or fields. A message is finished (`done`) only after Arc answers **204** for all of its rows, so Complete nodes fire once the data is stored. That takes up to one flush interval.
+
+**Types.** Every number is written as a floating-point value, even `21`, so a sensor that sends `21` and then `21.7` keeps one numeric column. List columns under *Integer columns* to store them as integers, or send a `BigInt`. The first value of a column fixes its type; a later value of another type leaves that cell empty (or rejects the message) and is listed in `msg.arc.rejectedCells`.
+
+**Names.** Database and measurement names must start with a letter and use only letters, digits, `_` and `-`. Column names must not start with `_` or be `time` in another case. Invalid messages are rejected immediately, so they never block other rows.
+
+**Failures.** A message that could not be written reaches Catch nodes unchanged, with `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so rows are never written twice. A rejected token pauses the node until the token works again.
+
+**Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest rows are dropped (or new messages are rejected) and their messages fail. Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
+</script>

@@ -1,0 +1,30 @@
+{
+  "name": "@basekick-labs/node-red-arc",
+  "version": "0.1.0",
+  "description": "Node-RED nodes for Arc: write rows as MessagePack with batching and safe retries, and query with SQL",
+  "license": "MIT",
+  "author": "Basekick Labs",
+  "homepage": "https://github.com/Basekick-Labs/node-red-arc#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/Basekick-Labs/node-red-arc.git" },
+  "bugs": { "url": "https://github.com/Basekick-Labs/node-red-arc/issues" },
+  "keywords": ["arc", "time-series", "msgpack", "iot", "telemetry", "database"],
+  "files": ["lib", "nodes", "examples", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.5" },
+  "node-red": {
+    "version": ">=4.0.0",
+    "nodes": {
+      "arc-server": "nodes/arc-server.js",
+      "arc-write": "nodes/arc-write.js",
+      "arc-query": "nodes/arc-query.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "e2e": "bash e2e/run.sh"
+  },
+  "devDependencies": {
+    "@msgpack/msgpack": "3.1.3",
+    "node-red": "4.1.8",
+    "node-red-node-test-helper": "0.3.6"
+  }
+}

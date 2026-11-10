@@ -1,0 +1,12 @@
+[
+  {"id":"ex_tab","type":"tab","label":"MQTT sensors to Arc"},
+  {"id":"ex_server","type":"arc-server","url":"http://localhost:8000","database":"sensors"},
+  {"id":"ex_inject","type":"inject","z":"ex_tab","name":"every second","props":[],"repeat":"1","once":true,"x":130,"y":80,"wires":[["ex_fn"]]},
+  {"id":"ex_fn","type":"function","z":"ex_tab","name":"simulate sensor","func":"msg.measurement = 'boiler';\nmsg.payload = { sensor: 'a1', line: 3, temperature: 20 + Math.random() * 5, pressure: 1 + Math.random() / 10, ok: true };\nreturn msg;","outputs":1,"x":330,"y":80,"wires":[["ex_write"]]},
+  {"id":"ex_write","type":"arc-write","z":"ex_tab","server":"ex_server","measurement":"boiler","integerColumns":"line","flushInterval":1000,"batchSize":5000,"x":530,"y":80,"wires":[]},
+  {"id":"ex_catch","type":"catch","z":"ex_tab","scope":["ex_write"],"uncaught":false,"x":130,"y":140,"wires":[["ex_debug"]]},
+  {"id":"ex_debug","type":"debug","z":"ex_tab","name":"write failures","active":true,"complete":"true","x":330,"y":140,"wires":[]},
+  {"id":"ex_qinject","type":"inject","z":"ex_tab","name":"query a1","props":[{"p":"params","v":"{\"sensor\":\"a1\"}","vt":"json"}],"x":130,"y":200,"wires":[["ex_query"]]},
+  {"id":"ex_query","type":"arc-query","z":"ex_tab","server":"ex_server","sql":"SELECT time_bucket(INTERVAL '1 minute', time) AS minute, avg(temperature) AS temp\nFROM boiler WHERE sensor = {{sensor}} AND time > now() - INTERVAL '1 hour'\nGROUP BY 1 ORDER BY 1","output":"rows","timeFormat":"string","x":330,"y":200,"wires":[["ex_qdebug"]]},
+  {"id":"ex_qdebug","type":"debug","z":"ex_tab","name":"rows","active":true,"x":530,"y":200,"wires":[]}
+]
