@@ -3,7 +3,7 @@
 // Builds the Node-RED flow used by the end-to-end run: for each Arc target, an
 // HTTP API in front of arc-write / arc-query so the harness can drive them.
 //
-//   POST /<t>/write?m=<measurement>  body = row(s); answers 204 only after the
+//   POST /<t>/write?m=<measurement>[&db=<database>]  body = row(s); answers 204 only after the
 //                                    Complete node fired (Arc answered 204),
 //                                    500 with the error when Catch fired
 //   POST /<t>/burst  {m, n}          sends n messages into arc-write, answers at once
@@ -36,7 +36,7 @@ function targetNodes(t, url, token, db, ca) {
     n({ id: id('in_write'), type: 'http in', url: `/${t}/write`, method: 'post', wires: [[id('prep')]] }),
     n({
       id: id('prep'), type: 'function', name: 'prep',
-      func: 'msg.measurement = msg.req.query.m;\nmsg.payload = msg.req.body;\nreturn msg;',
+      func: 'msg.measurement = msg.req.query.m;\nif (msg.req.query.db) msg.database = msg.req.query.db;\nmsg.payload = msg.req.body;\nreturn msg;',
       outputs: 1, wires: [[id('writer')]],
     }),
     n({
