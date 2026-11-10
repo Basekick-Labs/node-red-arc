@@ -136,13 +136,13 @@ Optional. With *Output one message per batch sent*, each batch produces `msg.pay
 
 ### Details
 
-Every value is a column; there are no tags or fields. A message is finished (`done`) only after Arc answers **204** for all of its rows, so Complete nodes fire once the data is stored. That takes up to one flush interval.
+Every value is a column; there are no tags or fields. A message is finished (`done`) only after Arc answers **204** for all of its rows, so Complete nodes fire once Arc has accepted the data, up to one flush interval later. How durable that is depends on Arc's write-ahead log settings.
 
-**Types.** Every number is written as a floating-point value, even `21`, so a sensor that sends `21` and then `21.7` keeps one numeric column. List columns under *Integer columns* to store them as integers, or send a `BigInt`. The first value of a column fixes its type; a later value of another type leaves that cell empty (or rejects the message) and is listed in `msg.arc.rejectedCells`.
+**Types.** Every number is written as a floating-point value, even `21`, so a sensor that sends `21` and then `21.7` keeps one numeric column. List columns under *Integer columns* to store them as integers, or send a `BigInt`. This node fixes each column's type from the first value it sends; a later value of another type leaves that cell empty (or rejects the message) and is listed in `msg.arc.rejectedCells`. The type is remembered per node and forgotten on redeploy, so set *Integer columns* before the first write: changing it later stores the same column as decimal in some files and integer in others.
 
 **Names.** Database and measurement names must start with a letter and use only letters, digits, `_` and `-`. Column names must not start with `_` or be `time` in another case. Arc treats names differing only in A–Z case as one column; the first spelling seen is kept and other spellings are rejected. Invalid messages are rejected immediately, so they never block other rows.
 
-**Failures.** A message that could not be written reaches Catch nodes with its payload untouched and `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so rows are never written twice. A rejected token pauses the node until the token works again.
+**Failures.** A message that could not be written reaches Catch nodes with its payload untouched and `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01.1 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so the node never writes a row twice. A flow that resends from Catch can; use `msg.arc.written` to skip rows Arc already has. A rejected token pauses the node until the token works again.
 
 **Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest message is dropped (or new messages are rejected) and fails. `msg.arc.written` counts rows of a failed message that Arc had already stored (a message larger than one batch). Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
 </script>
