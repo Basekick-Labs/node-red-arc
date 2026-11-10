@@ -130,7 +130,8 @@ module.exports = function (RED) {
           done();
         }
       });
-      writer.enqueue(typed.groups, handle);
+      // Column types are fixed only by messages the buffer accepted.
+      if (writer.enqueue(typed.groups, handle)) typed.commit();
       if (msg.flush === true) writer.flush();
     });
 

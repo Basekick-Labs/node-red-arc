@@ -6,30 +6,95 @@ const { retryAfterMs } = require('../lib/retry');
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Arc has no query parameters, so values are quoted here. {{name}} takes
-// msg.params.name as a literal; {{#name}} as an identifier (checked, not quoted).
+// msg.params.name as a literal; {{#name}} as an identifier (checked, then
+// double-quoted). A placeholder is only allowed where a value can stand: not
+// inside a string, a quoted identifier or a comment, where the quoting below
+// would not apply.
+const PLACEHOLDER_RE = /^\{\{\s*(#?)([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/;
+
 function render(sql, params) {
-  return sql.replace(/\{\{\s*(#?)([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_, ident, name) => {
-    if (!params || !(name in params)) throw new Error(`missing msg.params.${name}`);
-    const v = params[name];
-    if (ident) {
-      if (typeof v !== 'string' || !IDENT_RE.test(v)) throw new Error(`msg.params.${name} is not a valid identifier`);
-      return '"' + v + '"';
+  let out = '';
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    const two = sql.slice(i, i + 2);
+    if (c === "'" || c === '"') {
+      const end = closingQuote(sql, i, c);
+      const quoted = sql.slice(i, end);
+      if (/\{\{/.test(quoted)) throw new Error('placeholders cannot be inside quotes; write {{name}} without quotes, it is quoted for you');
+      out += quoted;
+      i = end;
+    } else if (two === '$$') {
+      const end = sql.indexOf('$$', i + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      if (/\{\{/.test(sql.slice(i, stop))) throw new Error('placeholders cannot be inside quotes; write {{name}} without quotes, it is quoted for you');
+      out += sql.slice(i, stop);
+      i = stop;
+    } else if (two === '--') {
+      const end = sql.indexOf('\n', i);
+      const stop = end === -1 ? sql.length : end;
+      if (/\{\{/.test(sql.slice(i, stop))) throw new Error('placeholders cannot be inside comments');
+      out += sql.slice(i, stop);
+      i = stop;
+    } else if (two === '/*') {
+      const end = sql.indexOf('*/', i + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      if (/\{\{/.test(sql.slice(i, stop))) throw new Error('placeholders cannot be inside comments');
+      out += sql.slice(i, stop);
+      i = stop;
+    } else if (two === '{{') {
+      const m = PLACEHOLDER_RE.exec(sql.slice(i));
+      if (!m) throw new Error(`invalid placeholder at "${sql.slice(i, i + 20)}"`);
+      const [whole, ident, name] = m;
+      if (!params || !Object.prototype.hasOwnProperty.call(params, name)) throw new Error(`missing msg.params.${name}`);
+      const v = params[name];
+      if (ident) {
+        if (typeof v !== 'string' || !IDENT_RE.test(v)) throw new Error(`msg.params.${name} is not a valid identifier`);
+        out += '"' + v + '"';
+      } else {
+        out += literal(v, name);
+      }
+      i += whole.length;
+    } else {
+      out += c;
+      i++;
     }
-    return literal(v, name);
-  });
+  }
+  return out;
+}
+
+// Index just past the quote that closes the one at start ('' or "" escape).
+function closingQuote(sql, start, q) {
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === q) {
+      if (sql[i + 1] === q) {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return sql.length;
 }
 
 function literal(v, name) {
   if (v === null || v === undefined) return 'NULL';
+  // Numbers are parenthesised so a negative one cannot form "--" with a
+  // preceding minus sign and comment out the rest of the query.
   if (typeof v === 'number') {
     if (!Number.isFinite(v)) throw new Error(`msg.params.${name} is not a finite number`);
-    return String(v);
+    return '(' + String(v) + ')';
   }
-  if (typeof v === 'bigint') return v.toString();
+  if (typeof v === 'bigint') return '(' + v.toString() + ')';
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   if (v instanceof Date) return "TIMESTAMP '" + v.toISOString().replace('T', ' ').replace('Z', '') + "'";
   if (typeof v === 'string') return "'" + v.replace(/'/g, "''") + "'";
-  if (Array.isArray(v)) return '(' + v.map((x) => literal(x, name)).join(', ') + ')';
+  if (Array.isArray(v)) {
+    if (v.length === 0) throw new Error(`msg.params.${name} is an empty list`);
+    return '(' + v.map((x) => literal(x, name)).join(', ') + ')';
+  }
   throw new Error(`msg.params.${name} has unsupported type ${typeof v}`);
 }
 
@@ -37,7 +102,7 @@ function literal(v, name) {
 // the source text to the reviver (Node 21+). Older runtimes lose precision.
 function parseJson(text) {
   return JSON.parse(text, function (key, value, context) {
-    if (typeof value === 'number' && !Number.isSafeInteger(value) && Number.isInteger(value) && context && context.source) {
+    if (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source || '')) {
       return context.source;
     }
     return value;
@@ -162,6 +227,7 @@ module.exports = function (RED) {
         send(msg);
       } else if (output === 'single') {
         const objs = toObjects(data);
+        if (objs.length === 0) send(Object.assign(RED.util.cloneMessage(msg), { payload: null, parts: { id: msg._msgid, index: 0, count: 0 } }));
         objs.forEach((o, i) => send(Object.assign(RED.util.cloneMessage(msg), { payload: o, parts: { id: msg._msgid, index: i, count: objs.length } })));
       } else if (output === 'chunks') {
         const count = Math.ceil(data.length / rowsPerMsg) || 1;

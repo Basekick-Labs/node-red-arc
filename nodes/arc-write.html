@@ -126,7 +126,7 @@ Writes rows to Arc as MessagePack, batched and buffered.
 : payload (object | array | number) : One row (`{temperature: 21.5, sensor: "a1"}`), an array of rows, `{rows: [...]}`, `{columns: {...}}` (equal-length arrays), or a number (stored in column `value`).
 : measurement (string) : Overrides the node's measurement.
 : database (string) : Overrides the node's and server's database.
-: time (Date | number | string | BigInt) : Time for the row(s), unless a row has its own `time`. Numbers use the node's time unit. Missing means "now".
+: time (Date | number | string | BigInt) : Time for the row(s), unless a row has its own `time`. Numbers use the node's time unit; strings are ISO 8601 (UTC without an offset) or digits. Missing means "now".
 : precision (string) : Overrides the time unit (`s`, `ms`, `us`, `ns`) for this message.
 : flush (boolean) : `true` sends everything buffered now.
 
@@ -140,9 +140,9 @@ Every value is a column; there are no tags or fields. A message is finished (`do
 
 **Types.** Every number is written as a floating-point value, even `21`, so a sensor that sends `21` and then `21.7` keeps one numeric column. List columns under *Integer columns* to store them as integers, or send a `BigInt`. The first value of a column fixes its type; a later value of another type leaves that cell empty (or rejects the message) and is listed in `msg.arc.rejectedCells`.
 
-**Names.** Database and measurement names must start with a letter and use only letters, digits, `_` and `-`. Column names must not start with `_` or be `time` in another case. Invalid messages are rejected immediately, so they never block other rows.
+**Names.** Database and measurement names must start with a letter and use only letters, digits, `_` and `-`. Column names must not start with `_` or be `time` in another case. Arc treats names differing only in A–Z case as one column; the first spelling seen is kept and other spellings are rejected. Invalid messages are rejected immediately, so they never block other rows.
 
-**Failures.** A message that could not be written reaches Catch nodes unchanged, with `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so rows are never written twice. A rejected token pauses the node until the token works again.
+**Failures.** A message that could not be written reaches Catch nodes with its payload untouched and `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so rows are never written twice. A rejected token pauses the node until the token works again.
 
-**Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest rows are dropped (or new messages are rejected) and their messages fail. Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
+**Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest message is dropped whole (or new messages are rejected) and fails. Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
 </script>

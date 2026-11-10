@@ -24,8 +24,14 @@ module.exports = function (RED) {
     let agent = null;
     let users = 0;
     let closing = false;
+    // Once closing, no new pooled agent is created: a late request (a node
+    // still finishing its flush) gets an unpooled socket instead of a pool
+    // nobody would destroy.
     node.agent = () => {
-      if (!agent) agent = createAgent(node.url, node.tlsOptions);
+      if (!agent) {
+        if (closing) return false;
+        agent = createAgent(node.url, node.tlsOptions);
+      }
       return agent;
     };
     node.register = () => {
@@ -79,7 +85,10 @@ module.exports = function (RED) {
   // editor user cannot make Node-RED send a deployed token to another host.
   RED.httpAdmin.post('/arc-server/test', RED.auth.needsPermission('arc-server.write'), async (req, res) => {
     const body = req.body || {};
-    const url = String(body.url || '').trim();
+    // The editor sends field values as typed, so ${VAR} references are
+    // resolved here the way the runtime resolves them on deploy.
+    const env = (v) => String(v || '').replace(/\$\{(\w+)\}/g, (_, k) => (process.env[k] !== undefined ? process.env[k] : ''));
+    const url = env(body.url).trim();
     let parsed;
     try {
       parsed = new URL(url);
@@ -99,12 +108,15 @@ module.exports = function (RED) {
         const creds = RED.nodes.getCredentials(body.id);
         if (creds && creds.token) {
           if (!deployed || deployed.url !== url) {
-            res.json({ ok: false, message: 'The URL changed since the token was saved; enter the token again to test it against the new URL' });
+            res.json({ ok: false, message: 'The URL changed since the token was saved (or the node is not deployed); enter the token again to test it against this URL' });
             return;
           }
-          token = creds.token;
+          // The deployed node holds the token with ${VAR} already resolved.
+          token = (deployed.credentials && deployed.credentials.token) || env(creds.token);
         }
       }
+    } else {
+      token = env(token);
     }
     const tlsOptions = {};
     if (body.tls) {

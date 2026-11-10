@@ -35,7 +35,9 @@ function wireTypes(buf, columnName) {
 }
 
 function encodeMsg(typer, msg, defaults) {
-  const { groups } = typer.type(msg, defaults || { measurement: 'm', database: 'db' });
+  const t = typer.type(msg, defaults || { measurement: 'm', database: 'db' });
+  t.commit();
+  const { groups } = t;
   const g = groups[0];
   return encodeColumns(g.measurement, buildColumns(g.rows));
 }
@@ -67,7 +69,7 @@ test('a non-integer in a declared integer column is a type mismatch, not a trunc
 
 test('type lock: a later value of another type is nulled by default', () => {
   const typer = new RowTyper({});
-  typer.type({ payload: { v: 1.5 } }, { measurement: 'm' });
+  typer.type({ payload: { v: 1.5 } }, { measurement: 'm' }).commit();
   const r = typer.type({ payload: { v: 'N/A', ok: true } }, { measurement: 'm' });
   assert.strictEqual(r.warnings.length, 1);
   assert.strictEqual(r.groups[0].rows[0].cells.has('v'), false);
@@ -76,7 +78,7 @@ test('type lock: a later value of another type is nulled by default', () => {
 
 test('type lock: reject-row rejects the message', () => {
   const typer = new RowTyper({ onTypeMismatch: 'reject-row' });
-  typer.type({ payload: { v: 1.5 } }, { measurement: 'm' });
+  typer.type({ payload: { v: 1.5 } }, { measurement: 'm' }).commit();
   assert.throws(() => typer.type({ payload: { v: 'x' } }, { measurement: 'm' }), RowError);
 });
 
@@ -152,4 +154,67 @@ test('retry classification', () => {
   assert.strictEqual(net('ECONNREFUSED', false).action, 'resend');
   assert.strictEqual(net('ECONNRESET', true).action, 'fail');
   assert.strictEqual(net('ETIMEDOUT', true).action, 'fail');
+});
+
+test('columns named after Object.prototype members are ordinary columns', () => {
+  const typer = new RowTyper({});
+  const buf = encodeMsg(typer, { payload: { constructor: 1, toString: 2, valueOf: 'x', hasOwnProperty: true } });
+  const obj = decode(buf, { useBigInt64: true });
+  assert.deepStrictEqual(Object.keys(obj.columns).sort(), ['constructor', 'hasOwnProperty', 'time', 'toString', 'valueOf']);
+  assert.deepStrictEqual(obj.columns.constructor, [1]);
+  const cols = encodeMsg(new RowTyper({}), { payload: { columns: { constructor: [1, 2], v: [3, 4] } } });
+  assert.deepStrictEqual(decode(cols).columns.constructor, [1, 2]);
+  assert.throws(() => new RowTyper({}).type({ payload: JSON.parse('{"__proto__": 1, "v": 2}') }, { measurement: 'm' }), RowError);
+});
+
+test('names that differ only by case: rejected within a row and across messages', () => {
+  const typer = new RowTyper({});
+  typer.type({ payload: { Temp: 1 } }, { measurement: 'm' }).commit();
+  assert.throws(() => typer.type({ payload: { temp: 2 } }, { measurement: 'm' }), /already written as "Temp"/);
+  assert.throws(() => typer.type({ payload: [{ Temp: 1 }, { temp: 2 }] }, { measurement: 'n' }), /already written|same column/);
+  // Arc folds ASCII only: non-ASCII case variants are different columns.
+  typer.type({ payload: { 'Ä': 1, 'ä': 2 } }, { measurement: 'u' }).commit();
+});
+
+test('sanitizeNames collisions are rejected, integerColumns match raw names', () => {
+  const typer = new RowTyper({ sanitizeNames: true, integerColumns: ['line.no'] });
+  assert.throws(() => typer.type({ payload: { 'a.b': 1, a_b: 2 } }, { measurement: 'm' }), /same column/);
+  const r = typer.type({ payload: { 'line.no': 3 } }, { measurement: 'm' });
+  assert.strictEqual(r.groups[0].rows[0].cells.get('line_no').kind, 'int');
+});
+
+test('locks are not taken until commit', () => {
+  const typer = new RowTyper({});
+  typer.type({ payload: { v: 'x' } }, { measurement: 'm' }); // not committed (buffer refused it)
+  const r = typer.type({ payload: { v: 1 } }, { measurement: 'm' });
+  assert.strictEqual(r.warnings.length, 0);
+});
+
+test('time strings: ISO only', () => {
+  assert.ok(toMicros('1.5', 's').error);
+  assert.ok(toMicros('12/31', 'ms').error);
+  assert.strictEqual(toMicros('2023-11-14T23:13:20.123456+01:00', 'ms').us, 1700000000123456n);
+  assert.strictEqual(toMicros('2023-11-14 22:13:20', 'ms').us, 1700000000000000n);
+  assert.ok(toMicros(1, 'constructor').error);
+});
+
+test('transport errors: anything before the body was sent is resent', () => {
+  const net = (code, bodySent) => classify({ error: Object.assign(new Error(code), { code, bodySent }) });
+  assert.strictEqual(net('ETIMEDOUT', false).action, 'resend');
+  assert.strictEqual(net('ECONNRESET', false).action, 'resend');
+  assert.strictEqual(net('ETIMEDOUT', true).action, 'fail');
+});
+
+test('query placeholders: quoting, negatives, refused positions', () => {
+  const { render } = require('../nodes/arc-query.js');
+  assert.strictEqual(render('SELECT 1 WHERE a-{{n}} > 0 AND t = 1', { n: -5 }), 'SELECT 1 WHERE a-(-5) > 0 AND t = 1');
+  assert.strictEqual(render('SELECT 1 WHERE s = {{s}}', { s: "a' OR 1=1 --" }), "SELECT 1 WHERE s = 'a'' OR 1=1 --'");
+  assert.strictEqual(render('SELECT {{#c}} FROM t WHERE id IN {{ids}}', { c: 'v', ids: [1, 'x'] }), 'SELECT "v" FROM t WHERE id IN ((1), \'x\')');
+  assert.throws(() => render("SELECT 1 WHERE x LIKE '%{{q}}%'", { q: 'x' }), /inside quotes/);
+  assert.throws(() => render('SELECT $$ {{q}} $$', { q: 'x' }), /inside quotes/);
+  assert.throws(() => render('SELECT 1 -- {{q}}', { q: 'x' }), /comments/);
+  assert.throws(() => render('SELECT 1 /* {{q}} */', { q: 'x' }), /comments/);
+  assert.throws(() => render('SELECT {{#c}}', { c: 'a; DROP' }), /identifier/);
+  assert.throws(() => render('SELECT {{q}}', {}), /missing/);
+  assert.throws(() => render('SELECT {{q}}', { q: [] }), /empty/);
 });

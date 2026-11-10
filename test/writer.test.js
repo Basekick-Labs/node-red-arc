@@ -20,9 +20,9 @@ function setup(opts, responder) {
   }, opts));
   const send = (payload, extra) => new Promise((resolve) => {
     const msg = Object.assign({ payload }, extra);
-    const { groups } = typer.type(msg, { measurement: 'm', database: 'db' });
+    const t = typer.type(msg, { measurement: 'm', database: 'db' });
     const h = writer.handle((err) => resolve(err || null));
-    writer.enqueue(groups, h);
+    if (writer.enqueue(t.groups, h)) t.commit();
   });
   return { writer, posts, send };
 }
@@ -151,5 +151,55 @@ test('one request in flight per measurement keeps order', async () => {
   });
   await Promise.all([1, 2, 3, 4, 5].map((i) => send({ a: i })));
   assert.strictEqual(maxSeen, 1);
+  await writer.close(100);
+});
+
+test('after close returns, a late refusal fails the batch instead of re-buffering it', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { writer, send } = setup({ flushIntervalMs: 10 }, async () => {
+    await gate;
+    return { status: 503, headers: { 'x-arc-ingest-fenced': '1', 'retry-after': '0' }, body: Buffer.alloc(0) };
+  });
+  const p = send({ a: 1 });
+  await new Promise((r) => setTimeout(r, 30));
+  const r = await writer.close(50);
+  assert.strictEqual(r.inFlight, 1);
+  release();
+  const err = await p;
+  assert.ok(err);
+  assert.match(err.message, /node closed/);
+  assert.strictEqual(writer.rows, 0);
+  assert.strictEqual(writer.retryTimer, null);
+  const late = await send({ a: 2 });
+  assert.match(late.message, /closed/);
+});
+
+test('drop-oldest drops a whole message, never part of it', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const posts = [];
+  const { writer, send } = setup({ maxBufferRows: 3, maxInFlight: 1, flushIntervalMs: 10000, batchSize: 100 }, async (_, d) => { posts.push(d); await gate; return ok(); });
+  const a = send([{ a: 1 }, { a: 2 }]);
+  const b = send({ a: 3 });
+  const c = send([{ a: 4 }, { a: 5 }]);
+  const errA = await a;
+  assert.match(errA.message, /buffer full/);
+  release();
+  await writer.close(500);
+  assert.strictEqual(await b, null);
+  assert.strictEqual(await c, null);
+  const written = posts.flatMap((p) => p.columns.a);
+  assert.ok(!written.includes(1) && !written.includes(2), 'rows of the dropped message were written: ' + written);
+});
+
+test('a hot key cannot starve the others with maxInFlight 1', async () => {
+  const order = [];
+  const { writer, send } = setup({ batchSize: 2, maxInFlight: 1, flushIntervalMs: 10000 }, async (_, d) => { order.push(d.m); await new Promise((r) => setTimeout(r, 2)); return ok(); });
+  const ps = [];
+  for (let i = 0; i < 10; i++) ps.push(send({ rows: [{ a: i }, { a: i }], measurement: 'hot' }));
+  ps.push(send({ rows: [{ b: 1 }, { b: 2 }], measurement: 'cold' }));
+  await Promise.all(ps);
+  assert.ok(order.indexOf('cold') < order.length - 1, 'cold waited for every hot batch: ' + order.join(','));
   await writer.close(100);
 });
