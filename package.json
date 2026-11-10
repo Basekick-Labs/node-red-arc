@@ -7,7 +7,7 @@
   "homepage": "https://github.com/Basekick-Labs/node-red-arc#readme",
   "repository": { "type": "git", "url": "git+https://github.com/Basekick-Labs/node-red-arc.git" },
   "bugs": { "url": "https://github.com/Basekick-Labs/node-red-arc/issues" },
-  "keywords": ["arc", "time-series", "msgpack", "iot", "telemetry", "database"],
+  "keywords": ["node-red", "arc", "time-series", "msgpack", "iot", "telemetry", "database"],
   "files": ["lib", "nodes", "examples", "README.md", "LICENSE"],
   "engines": { "node": ">=18.5" },
   "node-red": {
