@@ -65,7 +65,10 @@ async function waitCount(t, measurement, expected, timeoutMs) {
 }
 
 async function deploy() {
-  const flows = buildFlows(targets.map((t) => ({ name: t.name, url: t.nrArcUrl, token, db: t.db })));
+  const flows = buildFlows(targets.map((t) => ({
+    name: t.name, url: t.nrArcUrl, token: t.noAuth ? '' : token, db: t.db,
+    ca: t.caFile ? require('fs').readFileSync(t.caFile, 'utf8') : undefined,
+  })));
   const res = await fetch(nrUrl + '/flows', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Node-RED-Deployment-Type': 'full' },
@@ -128,6 +131,19 @@ async function runTarget(t) {
   check(`${t.name}: query param is quoted (injection returns 0 rows)`, r.status === 200 && r.body[0] && Number(r.body[0].n) === 0, r.body);
   r = await nr(`${p}/query`, { sql: 'SELECT count(*) AS n FROM typing WHERE sensor = {{s}}', params: { s: 'a1' } });
   check(`${t.name}: query returns row objects`, r.status === 200 && r.body[0] && Number(r.body[0].n) === 2, r.body);
+  r = await nr(`${p}/query`, {
+    sql: 'SELECT count(*) AS n FROM typing WHERE pressure > {{neg}} AND sensor IN {{ids}} AND time > {{since_date}} AND {{#col}} IS NOT NULL',
+    params: { neg: -5, ids: ['a1', 'a2'], since_date: '2000-01-01T00:00:00Z', col: 'pressure' },
+  });
+  check(`${t.name}: negative number, list, Date and identifier placeholders parse in DuckDB`, r.status === 200 && r.body[0] && Number(r.body[0].n) === 2, r.body);
+  {
+    const tc = await fetch(nrUrl + '/arc-server/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: `${t.name}_server`, url: t.nrArcUrl, token: '__PWRD__', tls: t.caFile ? `${t.name}_tls` : undefined }),
+    }).then((x) => x.json());
+    const expect = t.noAuth ? /Authentication is disabled/ : /Token permissions: .*write/;
+    check(`${t.name}: test connection with the saved token`, tc.ok === true && expect.test(tc.message), tc);
+  }
 
   // 9. Burst: every row arrives exactly once.
   const N = 20000;

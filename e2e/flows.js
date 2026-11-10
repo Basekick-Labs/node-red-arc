@@ -10,7 +10,7 @@
 //   POST /<t>/slow   {m, n}          same into an arc-write that flushes every 60 s
 //   POST /<t>/query  {sql, params}   arc-query, answers the rows
 
-function targetNodes(t, url, token, db) {
+function targetNodes(t, url, token, db, ca) {
   const id = (s) => `${t}_${s}`;
   const tab = id('tab');
   const n = (o) => Object.assign({ z: tab }, o);
@@ -31,7 +31,8 @@ function targetNodes(t, url, token, db) {
   });
   return [
     { id: tab, type: 'tab', label: `e2e ${t}` },
-    { id: id('server'), type: 'arc-server', url, database: db, credentials: { token } },
+    ...(ca ? [{ id: id('tls'), type: 'tls-config', cert: '', key: '', ca: '', servername: '', alpnprotocol: '', certname: '', keyname: '', caname: '', verifyservercert: true, credentials: { cadata: ca } }] : []),
+    Object.assign({ id: id('server'), type: 'arc-server', url, database: db, credentials: { token } }, ca ? { tls: id('tls') } : {}),
     n({ id: id('in_write'), type: 'http in', url: `/${t}/write`, method: 'post', wires: [[id('prep')]] }),
     n({
       id: id('prep'), type: 'function', name: 'prep',
@@ -54,7 +55,7 @@ function targetNodes(t, url, token, db) {
     n({ id: id('in_query'), type: 'http in', url: `/${t}/query`, method: 'post', wires: [[id('qprep')]] }),
     n({
       id: id('qprep'), type: 'function', name: 'qprep',
-      func: 'msg.sql = msg.req.body.sql;\nmsg.params = msg.req.body.params;\nreturn msg;',
+      func: 'msg.sql = msg.req.body.sql;\nmsg.params = msg.req.body.params;\nfor (const k of Object.keys(msg.params || {})) if (k.endsWith("_date")) msg.params[k] = new Date(msg.params[k]);\nreturn msg;',
       outputs: 1, wires: [[id('query')]],
     }),
     n({ id: id('query'), type: 'arc-query', server: id('server'), allowMsgSql: true, output: 'rows', timeFormat: 'string', wires: [[id('qres')]] }),
@@ -64,5 +65,5 @@ function targetNodes(t, url, token, db) {
 }
 
 module.exports = function buildFlows(targets) {
-  return targets.flatMap((t) => targetNodes(t.name, t.url, t.token, t.db));
+  return targets.flatMap((t) => targetNodes(t.name, t.url, t.token, t.db, t.ca));
 };

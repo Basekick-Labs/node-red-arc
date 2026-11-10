@@ -21,7 +21,7 @@ function setup(opts, responder) {
   const send = (payload, extra) => new Promise((resolve) => {
     const msg = Object.assign({ payload }, extra);
     const t = typer.type(msg, { measurement: 'm', database: 'db' });
-    const h = writer.handle((err) => resolve(err || null));
+    const h = writer.handle((err) => resolve(err ? Object.assign(err, { written: h.written }) : null));
     if (writer.enqueue(t.groups, h)) t.commit();
   });
   return { writer, posts, send };
@@ -201,5 +201,14 @@ test('a hot key cannot starve the others with maxInFlight 1', async () => {
   ps.push(send({ rows: [{ b: 1 }, { b: 2 }], measurement: 'cold' }));
   await Promise.all(ps);
   assert.ok(order.indexOf('cold') < order.length - 1, 'cold waited for every hot batch: ' + order.join(','));
+  await writer.close(100);
+});
+
+test('a message failing after some of its batches were stored reports how many', async () => {
+  let n = 0;
+  const { writer, send } = setup({ batchSize: 2, maxInFlight: 1 }, () => (++n === 1 ? ok() : { status: 500, headers: {}, body: Buffer.from('{"error":"x"}') }));
+  const err = await send([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }]);
+  assert.ok(err);
+  assert.strictEqual(err.written, 2);
   await writer.close(100);
 });

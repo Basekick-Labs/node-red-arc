@@ -59,7 +59,7 @@ A batch is never sent twice, so rows are never duplicated. On Arc releases befor
 
 ### Buffer
 
-Rows wait in memory, per database and measurement, until *Batch size* rows are buffered or *Flush every* has passed. When the buffer is full the oldest message is dropped whole and fails (or new messages are rejected). Size it as rows per second × the longest Arc outage you want to ride out. When a flow is stopped or redeployed, buffered rows are flushed within the node close timeout; whatever is left fails its messages.
+Rows wait in memory, per database and measurement, until *Batch size* rows are buffered or *Flush every* has passed. When the buffer is full the oldest message is dropped and fails (or new messages are rejected). A message larger than one batch can fail after some of its batches were stored; `msg.arc.written` says how many of its rows Arc already has, so a resend flow can skip them. Size it as rows per second × the longest Arc outage you want to ride out. When a flow is stopped or redeployed, buffered rows are flushed within the node close timeout; whatever is left fails its messages.
 
 ## Querying
 

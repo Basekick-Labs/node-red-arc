@@ -144,5 +144,5 @@ Every value is a column; there are no tags or fields. A message is finished (`do
 
 **Failures.** A message that could not be written reaches Catch nodes with its payload untouched and `msg.arc` describing why. The node resends only when Arc confirms nothing was stored (Arc 27.01 and later mark these answers). Anything else — including any error from earlier Arc releases — is reported, never resent, so rows are never written twice. A rejected token pauses the node until the token works again.
 
-**Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest message is dropped whole (or new messages are rejected) and fails. Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
+**Buffer.** Rows wait in memory until sent. When the buffer is full, the oldest message is dropped (or new messages are rejected) and fails. `msg.arc.written` counts rows of a failed message that Arc had already stored (a message larger than one batch). Size the buffer as rows per second × the longest outage you want to survive. Rows still buffered when the flow is stopped fail after the close timeout.
 </script>

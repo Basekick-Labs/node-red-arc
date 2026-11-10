@@ -124,7 +124,9 @@ module.exports = function (RED) {
       }
       const handle = writer.handle((err) => {
         if (err) {
-          msg.arc = Object.assign({}, msg.arc, bigintToString(err.arc || {}));
+          // Rows of this message Arc already stored (it spanned several
+          // batches): a flow that resends failed messages must skip them.
+          msg.arc = Object.assign({}, msg.arc, bigintToString(err.arc || {}), { written: handle.written });
           done(err);
         } else {
           done();

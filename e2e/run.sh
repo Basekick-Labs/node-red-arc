@@ -13,12 +13,20 @@ NET=nrarc-e2e
 WORK="$(pwd)/e2e/.data"
 ARC26_PORT=18000
 ARCMAIN_PORT=18001
+ARCTLS_PORT=18002
+ARCNOAUTH_PORT=18003
 NR4_PORT=18804
 NR5_PORT=18805
 
 cleanup() {
   docker rm -f nrarc-arc26 nrarc-nr4 nrarc-nr5 >/dev/null 2>&1 || true
-  [ -f "$WORK/arc-main.pid" ] && kill "$(cat "$WORK/arc-main.pid")" 2>/dev/null || true
+  # Stop native Arcs by the PID listening on their port: a stale one from an
+  # earlier run would keep the port and serve old data or an old certificate.
+  for port in $ARCMAIN_PORT $ARCTLS_PORT $ARCNOAUTH_PORT; do
+    pid=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    [ -n "$pid" ] && kill $pid 2>/dev/null || true
+  done
+  sleep 1
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -63,6 +71,28 @@ EOF
   chmod +x "$WORK/arc-main.sh"
   "$WORK/arc-main.sh" start
   TARGETS="$TARGETS"',{"name":"amain","hostUrl":"http://localhost:'$ARCMAIN_PORT'","nrArcUrl":"http://host.docker.internal:'$ARCMAIN_PORT'","db":"nodered_e2e","stop":"'$WORK'/arc-main.sh stop","start":"'$WORK'/arc-main.sh start"}'
+
+  # Arc main over TLS, with a self-signed certificate the flow trusts through
+  # a tls-config node.
+  mkdir -p "$WORK/arctls/data" "$WORK/arcnoauth/data"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=host.docker.internal" \
+    -addext "subjectAltName=DNS:host.docker.internal,DNS:localhost" \
+    -keyout "$WORK/arctls/key.pem" -out "$WORK/arctls/cert.pem" >/dev/null 2>&1
+  (cd "$WORK/arctls" && ARC_SERVER_PORT=$ARCTLS_PORT ARC_SERVER_TLS_ENABLED=true \
+    ARC_SERVER_TLS_CERT_FILE="$WORK/arctls/cert.pem" ARC_SERVER_TLS_KEY_FILE="$WORK/arctls/key.pem" \
+    ARC_AUTH_BOOTSTRAP_TOKEN="$TOKEN" ARC_COMPACTION_ENABLED=false \
+    ARC_STORAGE_LOCAL_PATH="$WORK/arctls/data/arc" ARC_AUTH_DB_PATH="$WORK/arctls/data/arc.db" \
+    nohup "$ARC_MAIN_BIN" > "$WORK/arctls/arc.log" 2>&1 & echo $! > "$WORK/arctls.pid")
+  # Arc main with authentication disabled; the server node has no token.
+  (cd "$WORK/arcnoauth" && ARC_SERVER_PORT=$ARCNOAUTH_PORT ARC_AUTH_ENABLED=false ARC_COMPACTION_ENABLED=false \
+    ARC_STORAGE_LOCAL_PATH="$WORK/arcnoauth/data/arc" ARC_AUTH_DB_PATH="$WORK/arcnoauth/data/arc.db" \
+    nohup "$ARC_MAIN_BIN" > "$WORK/arcnoauth/arc.log" 2>&1 & echo $! > "$WORK/arcnoauth.pid")
+  wait_http "http://localhost:$ARCNOAUTH_PORT/health" 60
+  grep -q "address already in use" "$WORK"/arc*/arc.log 2>/dev/null && { echo "an Arc port is taken" >&2; exit 1; }
+  for _ in $(seq 1 60); do curl -sfk -o /dev/null "https://localhost:$ARCTLS_PORT/health" && break; sleep 1; done
+  export NODE_EXTRA_CA_CERTS="$WORK/arctls/cert.pem"
+  TARGETS="$TARGETS"',{"name":"atls","hostUrl":"https://localhost:'$ARCTLS_PORT'","nrArcUrl":"https://host.docker.internal:'$ARCTLS_PORT'","db":"nodered_e2e","caFile":"'$WORK'/arctls/cert.pem"}'
+  TARGETS="$TARGETS"',{"name":"anoauth","hostUrl":"http://localhost:'$ARCNOAUTH_PORT'","nrArcUrl":"http://host.docker.internal:'$ARCNOAUTH_PORT'","db":"nodered_e2e","noAuth":true}'
 fi
 TARGETS="$TARGETS]"
 

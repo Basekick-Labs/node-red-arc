@@ -12,11 +12,19 @@ module.exports = function (RED) {
     node.database = config.database || 'default';
     node.timeoutMs = Number(config.timeoutMs) || 30000;
     node.compression = config.compression || 'auto';
+    // The tls-config node is looked up on first use, not here: Node-RED does
+    // not guarantee it is constructed before this node.
     node.tlsOptions = {};
-    if (config.tls) {
+    let tlsResolved = !config.tls;
+    const resolveTls = () => {
+      if (tlsResolved) return;
       const tlsNode = RED.nodes.getNode(config.tls);
-      if (tlsNode && typeof tlsNode.addTLSOptions === 'function') tlsNode.addTLSOptions(node.tlsOptions);
-    }
+      if (!tlsNode || typeof tlsNode.addTLSOptions !== 'function') {
+        throw new Error(`TLS configuration ${config.tls} of this Arc server is not available`);
+      }
+      tlsNode.addTLSOptions(node.tlsOptions);
+      tlsResolved = true;
+    };
 
     // The agent is shared by every node using this config. Node-RED closes
     // config nodes and the nodes using them concurrently on a redeploy, so the
@@ -28,6 +36,7 @@ module.exports = function (RED) {
     // still finishing its flush) gets an unpooled socket instead of a pool
     // nobody would destroy.
     node.agent = () => {
+      resolveTls();
       if (!agent) {
         if (closing) return false;
         agent = createAgent(node.url, node.tlsOptions);
@@ -52,13 +61,20 @@ module.exports = function (RED) {
       return h;
     };
 
-    node.request = (opts) =>
-      request(Object.assign({
+    node.request = (opts) => {
+      let agentNow;
+      try {
+        agentNow = node.agent();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      return request(Object.assign({
         baseUrl: node.url,
-        agent: node.agent(),
+        agent: agentNow,
         tlsOptions: node.tlsOptions,
         timeoutMs: node.timeoutMs,
       }, opts, { headers: node.headers(opts.headers) }));
+    };
 
     // True when the token is accepted (or the server has auth disabled).
     node.verifyAuth = async () => {
