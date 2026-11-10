@@ -6,7 +6,9 @@ Node-RED nodes for [Arc](https://github.com/Basekick-Labs/arc). Write rows from 
 npm install @basekick-labs/node-red-arc
 ```
 
-Requires Node-RED 4.0 or later. No runtime dependencies.
+Or search for `basekick` in **Menu → Manage palette → Install**. Requires Node-RED 4.0 or later. No runtime dependencies.
+
+Full documentation: [Arc](https://docs.basekick.net/arc/integrations/node-red/) · [Arc Enterprise](https://docs.basekick.net/arc-enterprise/integrations/node-red/) (cluster endpoints, failover, RBAC tokens).
 
 ## Nodes
 
