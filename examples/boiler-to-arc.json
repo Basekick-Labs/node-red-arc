@@ -1,5 +1,5 @@
 [
-  {"id":"ex_tab","type":"tab","label":"MQTT sensors to Arc"},
+  {"id":"ex_tab","type":"tab","label":"Boiler sensor to Arc"},
   {"id":"ex_server","type":"arc-server","url":"http://localhost:8000","database":"sensors"},
   {"id":"ex_inject","type":"inject","z":"ex_tab","name":"every second","props":[],"repeat":"1","once":true,"x":130,"y":80,"wires":[["ex_fn"]]},
   {"id":"ex_fn","type":"function","z":"ex_tab","name":"simulate sensor","func":"msg.measurement = 'boiler';\nmsg.payload = { sensor: 'a1', line: 3, temperature: 20 + Math.random() * 5, pressure: 1 + Math.random() / 10, ok: true };\nreturn msg;","outputs":1,"x":330,"y":80,"wires":[["ex_write"]]},
