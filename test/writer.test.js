@@ -104,6 +104,21 @@ test('401 pauses and resumes after the auth probe succeeds', async () => {
   await writer.close(100);
 });
 
+test('403 pauses the batch until the auth probe confirms write access', async () => {
+  let canWrite = false;
+  const { writer, posts, send } = setup({ authProbeMs: 25, authProbe: async () => canWrite }, () => (
+    canWrite ? ok() : { status: 403, headers: {}, body: Buffer.alloc(0) }
+  ));
+  const p = send({ a: 1 });
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(writer.paused, true);
+  assert.strictEqual(posts.length, 1, 'the batch is not retried while write access is missing');
+  canWrite = true;
+  assert.strictEqual(await p, null);
+  assert.strictEqual(posts.length, 2);
+  await writer.close(100);
+});
+
 test('buffer overflow drops the oldest and fails its message', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });

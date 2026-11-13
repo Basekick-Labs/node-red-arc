@@ -53,9 +53,10 @@ The node resends a batch only when Arc says nothing was stored:
 | connection refused, DNS failure | backs off (1 s to 30 s) and resends |
 | connection reset or timeout before the request body was sent | resends |
 | 401 | pauses the node and checks the token every 60 s |
+| 403 | pauses the node until the token has `write` or `admin` permission |
 | 413 | splits the batch and resends the halves |
 | 400 `partial write` (Arc 27.01.1 and later) | reports the batch; most of its rows *were* stored, `msg.arc.partial` is true and `msg.arc.dropped` says how many were not |
-| anything else (400, 403, 500, 502, 504, a reset or timeout after sending, any 503 from Arc before 27.01.1) | reports the batch to Catch nodes, never resends |
+| anything else (400, 500, 502, 504, a reset or timeout after sending, any 503 from Arc before 27.01.1) | reports the batch to Catch nodes, never resends |
 
 The node never sends a batch twice, so it never duplicates rows; a flow that resends failed messages from a Catch node can, so use `msg.arc.written` to skip rows Arc already has. On Arc releases before 27.01.1 a server-side failure cannot be told apart from "stored", so it is reported instead of retried.
 

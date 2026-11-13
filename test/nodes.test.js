@@ -14,7 +14,7 @@ helper.init(require.resolve('node-red'));
 
 // A fake Arc: records writes, answers queries, and can be told what to return.
 function fakeArc() {
-  const state = { writes: [], auth: [], queries: [], writeStatus: 204, seenTokens: [] };
+  const state = { writes: [], auth: [], queries: [], writeStatus: 204, authStatus: null, authBody: null, seenTokens: [] };
   const srv = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -27,8 +27,8 @@ function fakeArc() {
       }
       if (req.url === '/api/v1/auth/verify') {
         const ok = req.headers.authorization === 'Bearer good';
-        res.statusCode = ok ? 200 : 401;
-        res.end(JSON.stringify(ok ? { valid: true, permissions: ['read', 'write'] } : { valid: false }));
+        res.statusCode = state.authStatus === null ? (ok ? 200 : 401) : state.authStatus;
+        res.end(JSON.stringify(state.authBody === null ? (ok ? { valid: true, permissions: ['read', 'write'] } : { valid: false }) : state.authBody));
         return;
       }
       if (req.url === '/api/v1/write/msgpack') {
@@ -154,4 +154,23 @@ test('test connection: a stored token is never sent to a different URL', async (
   assert.strictEqual(bad.ok, false);
   arc.srv.close();
   other.srv.close();
+});
+
+test('verifyAuth resumes writes only when the token has write or admin permission', async () => {
+  const arc = await fakeArc();
+  await helper.load(nodes, flow(arc.url), { s1: { token: 'good' } });
+  const server = helper.getNode('s1');
+  assert.strictEqual(await server.verifyAuth(), true);
+  arc.state.authBody = { valid: true, permissions: ['read'] };
+  assert.strictEqual(await server.verifyAuth(), false);
+  arc.state.authBody = { token_info: { permissions: 'read, write' } };
+  assert.strictEqual(await server.verifyAuth(), true);
+  arc.state.authBody = { permissions: ['admin'] };
+  assert.strictEqual(await server.verifyAuth(), true);
+  arc.state.authStatus = 404;
+  assert.strictEqual(await server.verifyAuth(), true);
+  arc.state.authStatus = 200;
+  arc.state.authBody = { valid: true };
+  assert.strictEqual(await server.verifyAuth(), false);
+  arc.srv.close();
 });

@@ -76,10 +76,19 @@ module.exports = function (RED) {
       }, opts, { headers: node.headers(opts.headers) }));
     };
 
-    // True when the token is accepted (or the server has auth disabled).
+    // True when the token can write (or the server has auth disabled).
     node.verifyAuth = async () => {
       const res = await node.request({ method: 'GET', path: '/api/v1/auth/verify' });
-      return res.status === 200 || res.status === 404;
+      if (res.status === 404) return true;
+      if (res.status !== 200) return false;
+      try {
+        const info = JSON.parse(res.body.toString('utf8'));
+        const permissions = info.permissions || (info.token_info && info.token_info.permissions);
+        const list = Array.isArray(permissions) ? permissions : String(permissions || '').split(',');
+        return list.some((permission) => ['write', 'admin'].includes(String(permission).trim().toLowerCase()));
+      } catch (_) {
+        return false;
+      }
     };
 
     node.on('close', (done) => {
