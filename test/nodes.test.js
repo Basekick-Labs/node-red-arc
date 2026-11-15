@@ -14,7 +14,11 @@ helper.init(require.resolve('node-red'));
 
 // A fake Arc: records writes, answers queries, and can be told what to return.
 function fakeArc() {
-  const state = { writes: [], auth: [], queries: [], writeStatus: 204, seenTokens: [] };
+  const state = { writes: [], auth: [], queries: [], writeStatus: 204, queryStatus: 200, queryRetryAfter: null, holdQuery: false, seenTokens: [] };
+  let querySeenResolve;
+  const querySeen = new Promise((resolve) => { querySeenResolve = resolve; });
+  let queryClosedResolve;
+  const queryClosed = new Promise((resolve) => { queryClosedResolve = resolve; });
   const srv = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -39,8 +43,17 @@ function fakeArc() {
         return;
       }
       if (req.url === '/api/v1/query') {
+        res.on('close', () => queryClosedResolve());
         const q = JSON.parse(body.toString());
         state.queries.push({ sql: q.sql, db: req.headers['x-arc-database'] });
+        querySeenResolve();
+        if (state.holdQuery) return;
+        if (state.queryStatus !== 200) {
+          res.statusCode = state.queryStatus;
+          if (state.queryRetryAfter) res.setHeader('Retry-After', state.queryRetryAfter);
+          res.end('{"error":"temporary failure"}');
+          return;
+        }
         res.setHeader('Content-Type', 'application/json');
         res.end('{"success":true,"columns":["time","v","big"],"data":[["2026-11-09T10:00:00.123456Z",1.5,9007199254740993]],"row_count":1,"execution_time_ms":1}');
         return;
@@ -49,7 +62,7 @@ function fakeArc() {
       res.end();
     });
   });
-  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({ srv, state, url: `http://127.0.0.1:${srv.address().port}` })));
+  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({ srv, state, querySeen, queryClosed, url: `http://127.0.0.1:${srv.address().port}` })));
 }
 
 function flow(url, writeCfg) {
@@ -137,6 +150,38 @@ test('arc-query: rows as objects, params quoted, big ints kept where supported',
   const major = Number(process.versions.node.split('.')[0]);
   if (major >= 21) assert.strictEqual(msg.payload[0].big, '9007199254740993');
   assert.strictEqual(msg.arc.rowCount, 1);
+  arc.srv.close();
+});
+
+test('arc-query: closing during a 503 retry wait cancels the retry', async () => {
+  const arc = await fakeArc();
+  arc.state.queryStatus = 503;
+  arc.state.queryRetryAfter = '1';
+  await helper.load(nodes, [
+    { id: 's1', type: 'arc-server', url: arc.url },
+    { id: 'q1', type: 'arc-query', server: 's1', sql: 'SELECT 1', wires: [] },
+  ]);
+  helper.getNode('q1').receive({});
+  await arc.querySeen;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await helper.unload();
+  await new Promise((resolve) => setTimeout(resolve, 1300));
+  assert.strictEqual(arc.state.queries.length, 1);
+  arc.srv.close();
+});
+
+test('arc-query: closing aborts an in-flight request', async () => {
+  const arc = await fakeArc();
+  arc.state.holdQuery = true;
+  await helper.load(nodes, [
+    { id: 's1', type: 'arc-server', url: arc.url },
+    { id: 'q1', type: 'arc-query', server: 's1', sql: 'SELECT 1', wires: [] },
+  ]);
+  helper.getNode('q1').receive({});
+  await arc.querySeen;
+  await helper.unload();
+  await arc.queryClosed;
+  assert.strictEqual(arc.state.queries.length, 1);
   arc.srv.close();
 });
 
