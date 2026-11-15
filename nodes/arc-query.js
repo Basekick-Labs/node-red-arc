@@ -135,6 +135,14 @@ module.exports = function (RED) {
     const rowsPerMsg = Math.max(1, Number(config.rowsPerMsg) || 1000);
     const timeFormat = config.timeFormat || 'string';
     const maxResponseBytes = (Number(config.maxResponseMB) || 64) * 1024 * 1024;
+    let closing = false;
+    const activeRequests = new Set();
+
+    node.on('close', (done) => {
+      closing = true;
+      for (const controller of activeRequests) controller.abort();
+      done();
+    });
 
     node.on('input', async (msg, send, done) => {
       if (!server) {
@@ -164,23 +172,46 @@ module.exports = function (RED) {
         headers['x-arc-database'] = database;
       }
       node.status({ fill: 'blue', shape: 'dot', text: 'querying' });
+      if (closing) {
+        done(new Error('node closed'));
+        return;
+      }
+      const controller = new AbortController();
+      activeRequests.add(controller);
       const call = () => server.request({
         method: 'POST', path: '/api/v1/query', headers, body: Buffer.from(JSON.stringify({ sql })), maxResponseBytes,
+        signal: controller.signal,
       });
       let res;
       try {
         res = await call();
+        if (controller.signal.aborted) throw new Error('node closed');
         if (res.status === 503) {
           const wait = Math.min(retryAfterMs(res.headers) || 1000, 10000);
-          await new Promise((r) => setTimeout(r, wait));
+          await new Promise((resolve, reject) => {
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new Error('node closed'));
+            };
+            const timer = setTimeout(() => {
+              controller.signal.removeEventListener('abort', onAbort);
+              resolve();
+            }, wait);
+            controller.signal.addEventListener('abort', onAbort, { once: true });
+            if (controller.signal.aborted) onAbort();
+          });
           res = await call();
+          if (controller.signal.aborted) throw new Error('node closed');
         }
       } catch (err) {
-        node.status({ fill: 'red', shape: 'dot', text: err.code || 'error' });
-        msg.arc = { error: err.message };
-        done(err);
+        activeRequests.delete(controller);
+        const error = closing ? new Error('node closed') : err;
+        node.status({ fill: 'red', shape: 'dot', text: error.code || 'error' });
+        msg.arc = { error: error.message };
+        done(error);
         return;
       }
+      activeRequests.delete(controller);
       let body;
       try {
         body = parseJson(res.body.toString('utf8'));
