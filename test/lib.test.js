@@ -144,6 +144,10 @@ test('retry classification', () => {
   const pw = r(400, {}, '{"error":"partial write: 3 points dropped: bad; the other points were written"}');
   assert.strictEqual(pw.action, 'fail');
   assert.strictEqual(pw.dropped, 3);
+  assert.strictEqual(r(400, {}, '{"error":"Invalid gzip compression: decompressed payload exceeds 2.5MB limit"}').action, 'split');
+  assert.strictEqual(r(400, {}, '{"error":"Invalid zstd compression: decompressed payload exceeds 64MB limit"}').action, 'split');
+  assert.strictEqual(r(400, {}, '{"error":"Invalid gzip compression: unexpected EOF"}').action, 'fail');
+  assert.strictEqual(r(400, {}, '{"error":"decompressed payload exceeds 2MB limit"}').action, 'fail');
   assert.strictEqual(r(500, {}, '{"error":"x","rows_written":10}').action, 'fail');
   assert.strictEqual(r(413).action, 'split');
   assert.strictEqual(r(401).action, 'auth');
