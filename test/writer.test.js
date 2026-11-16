@@ -92,6 +92,17 @@ test('413 splits the batch until it fits', async () => {
   await writer.close(100);
 });
 
+test('Arc decompressed-size 400 splits the batch until it fits', async () => {
+  const { writer, posts, send } = setup({ flushIntervalMs: 50 }, (_, d) => (d.columns.a.length > 2
+    ? { status: 400, headers: {}, body: Buffer.from('{"error":"Invalid gzip compression: decompressed payload exceeds 2MB limit"}') }
+    : ok()));
+  const err = await send([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }]);
+  assert.strictEqual(err, null);
+  const written = posts.filter((p) => p.decoded.columns.a.length <= 2).flatMap((p) => p.decoded.columns.a);
+  assert.deepStrictEqual(written, [1, 2, 3, 4, 5]);
+  await writer.close(100);
+});
+
 test('401 pauses and resumes after the auth probe succeeds', async () => {
   let authOk = false;
   const { writer, posts, send } = setup({ authProbeMs: 30, authProbe: async () => authOk }, () => (authOk ? ok() : { status: 401, headers: {}, body: Buffer.alloc(0) }));
